@@ -430,6 +430,7 @@ typedef enum sgp_error {
     SGP_ERROR_ALLOC_FAILED,
     SGP_ERROR_MAKE_VERTEX_BUFFER_FAILED,
     SGP_ERROR_MAKE_WHITE_IMAGE_FAILED,
+    SGP_ERROR_MAKE_WHITE_VIEW_FAILED,
     SGP_ERROR_MAKE_NEAREST_SAMPLER_FAILED,
     SGP_ERROR_MAKE_COMMON_SHADER_FAILED,
     SGP_ERROR_MAKE_COMMON_PIPELINE_FAILED,
@@ -532,6 +533,7 @@ typedef struct sgp_uniform {
 typedef struct sgp_textures_uniform {
     uint32_t count;
     sg_image images[SGP_TEXTURE_SLOTS];
+    sg_view views[SGP_TEXTURE_SLOTS];
     sg_sampler samplers[SGP_TEXTURE_SLOTS];
 } sgp_textures_uniform;
 
@@ -617,6 +619,7 @@ SOKOL_GP_API_DECL void sgp_reset_blend_mode(void);                          /* R
 SOKOL_GP_API_DECL void sgp_set_color(float r, float g, float b, float a);   /* Sets current color modulation. */
 SOKOL_GP_API_DECL void sgp_reset_color(void);                               /* Resets current color modulation to default (white). */
 SOKOL_GP_API_DECL void sgp_set_image(int channel, sg_image image);          /* Sets current bound image in a texture channel. */
+SOKOL_GP_API_DECL void sgp_set_view(int channel, sg_view view);            /* Sets current bound view in a texture channel. */
 SOKOL_GP_API_DECL void sgp_unset_image(int channel);                        /* Remove current bound image in a texture channel (no texture). */
 SOKOL_GP_API_DECL void sgp_reset_image(int channel);                        /* Resets current bound image in a texture channel to default (white texture). */
 SOKOL_GP_API_DECL void sgp_set_sampler(int channel, sg_sampler sampler);    /* Sets current bound sampler in a texture channel. */
@@ -727,6 +730,7 @@ typedef struct _sgp_context {
     sg_shader shader;
     sg_buffer vertex_buf;
     sg_image white_img;
+    sg_view white_view;
     sg_sampler nearest_smp;
     sg_pipeline pipelines[_SG_PRIMITIVETYPE_NUM * _SGP_BLENDMODE_NUM];
 
@@ -1638,20 +1642,20 @@ static sg_shader _sgp_make_common_shader(void) {
     sg_backend backend = sg_query_backend();
     sg_shader_desc desc;
     memset(&desc, 0, sizeof(desc));
-    desc.images[0].stage = SG_SHADERSTAGE_FRAGMENT;
-    desc.images[0].multisampled = false;
-    desc.images[0].image_type = SG_IMAGETYPE_2D;
-    desc.images[0].sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+    desc.views[0].texture.stage = SG_SHADERSTAGE_FRAGMENT;
+    desc.views[0].texture.multisampled = false;
+    desc.views[0].texture.image_type = SG_IMAGETYPE_2D;
+    desc.views[0].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
     desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
     desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
-    desc.image_sampler_pairs[0].stage = SG_SHADERSTAGE_FRAGMENT;
-    desc.image_sampler_pairs[0].image_slot = 0;
-    desc.image_sampler_pairs[0].sampler_slot = 0;
+    desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_FRAGMENT;
+    desc.texture_sampler_pairs[0].view_slot = 0;
+    desc.texture_sampler_pairs[0].sampler_slot = 0;
 
     // GLCORE / GLES3 only
     desc.attrs[SGP_VS_ATTR_COORD].glsl_name = "coord";
     desc.attrs[SGP_VS_ATTR_COLOR].glsl_name = "color";
-    desc.image_sampler_pairs[0].glsl_name = "iTexChannel0_iSmpChannel0";
+    desc.texture_sampler_pairs[0].glsl_name = "iTexChannel0_iSmpChannel0";
 
     // D3D11 only
     desc.attrs[SGP_VS_ATTR_COORD].hlsl_sem_name = "TEXCOORD";
@@ -1757,8 +1761,8 @@ void sgp_setup(const sgp_desc* desc) {
     sg_buffer_desc vertex_buf_desc;
     memset(&vertex_buf_desc, 0, sizeof(sg_buffer_desc));
     vertex_buf_desc.size = (size_t)(_sgp.num_vertices * sizeof(sgp_vertex));
-    vertex_buf_desc.type = SG_BUFFERTYPE_VERTEXBUFFER;
-    vertex_buf_desc.usage = SG_USAGE_STREAM;
+    vertex_buf_desc.usage.vertex_buffer = true;
+    vertex_buf_desc.usage.stream_update = true;
 
     _sgp.vertex_buf = sg_make_buffer(&vertex_buf_desc);
     if (sg_query_buffer_state(_sgp.vertex_buf) != SG_RESOURCESTATE_VALID) {
@@ -1776,13 +1780,25 @@ void sgp_setup(const sgp_desc* desc) {
     white_img_desc.width = 2;
     white_img_desc.height = 2;
     white_img_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
-    white_img_desc.data.subimage[0][0].ptr = pixels;
-    white_img_desc.data.subimage[0][0].size = sizeof(pixels);
+    white_img_desc.data.mip_levels[0].ptr = pixels;
+    white_img_desc.data.mip_levels[0].size = sizeof(pixels);
     white_img_desc.label = "sgp-white-texture";
     _sgp.white_img = sg_make_image(&white_img_desc);
     if (sg_query_image_state(_sgp.white_img) != SG_RESOURCESTATE_VALID) {
         sgp_shutdown();
         _sgp_set_error(SGP_ERROR_MAKE_WHITE_IMAGE_FAILED);
+        return;
+    }
+
+    // create white view
+    sg_view_desc white_view_desc;
+    memset(&white_view_desc, 0, sizeof(sg_view_desc));
+    white_view_desc.texture.image = _sgp.white_img;
+    white_view_desc.label = "sgp-white-view";
+    _sgp.white_view = sg_make_view(&white_view_desc);
+    if (sg_query_view_state(_sgp.white_view) != SG_RESOURCESTATE_VALID) {
+        sgp_shutdown();
+        _sgp_set_error(SGP_ERROR_MAKE_WHITE_VIEW_FAILED);
         return;
     }
 
@@ -1853,6 +1869,9 @@ void sgp_shutdown(void) {
     }
     if (_sgp.white_img.id != SG_INVALID_ID) {
         sg_destroy_image(_sgp.white_img);
+    }
+    if (_sgp.white_view.id != SG_INVALID_ID) {
+        sg_destroy_view(_sgp.white_view);
     }
     if (_sgp.nearest_smp.id != SG_INVALID_ID) {
         sg_destroy_sampler(_sgp.nearest_smp);
@@ -1960,10 +1979,13 @@ void sgp_begin(int width, int height) {
 
     _sgp.state.textures.count = 1;
     _sgp.state.textures.images[0] = _sgp.white_img;
+    _sgp.state.textures.views[0] = _sgp.white_view;
     _sgp.state.textures.samplers[0] = _sgp.nearest_smp;
     sg_image img = {SG_INVALID_ID};
+    sg_view view = {SG_INVALID_ID};
     for (int i=1;i<SGP_TEXTURE_SLOTS;++i) {
         _sgp.state.textures.images[i] = img;
+        _sgp.state.textures.views[i] = view;
         _sgp.state.textures.samplers[i] = _sgp.nearest_smp;
     }
 }
@@ -2002,9 +2024,9 @@ void sgp_flush(void) {
 
     uint32_t cur_pip_id = _SGP_IMPOSSIBLE_ID;
     uint32_t cur_uniform_index = _SGP_IMPOSSIBLE_ID;
-    uint32_t cur_imgs_id[SGP_TEXTURE_SLOTS];
+    uint32_t cur_views_id[SGP_TEXTURE_SLOTS];
     for (int i=0;i<SGP_TEXTURE_SLOTS;++i) {
-        cur_imgs_id[i] = _SGP_IMPOSSIBLE_ID;
+        cur_views_id[i] = _SGP_IMPOSSIBLE_ID;
     }
 
     // define the resource bindings
@@ -2044,18 +2066,18 @@ void sgp_flush(void) {
                 }
                 // bindings
                 for (uint32_t j=0;j<SGP_TEXTURE_SLOTS;++j) {
-                    uint32_t img_id = SG_INVALID_ID;
+                    uint32_t view_id = SG_INVALID_ID;
                     uint32_t smp_id = SG_INVALID_ID;
                     if (j < args->textures.count) {
-                        img_id = args->textures.images[j].id;
-                        if (img_id != SG_INVALID_ID) {
+                        view_id = args->textures.views[j].id;
+                        if (view_id != SG_INVALID_ID) {
                             smp_id = args->textures.samplers[j].id;
                         }
                     }
-                    if (cur_imgs_id[j] != img_id) {
-                        // when an image binding change we need to re-apply bindings
-                        cur_imgs_id[j] = img_id;
-                        bind.images[j].id = img_id;
+                    if (cur_views_id[j] != view_id) {
+                        // when a view binding change we need to re-apply bindings
+                        cur_views_id[j] = view_id;
+                        bind.views[j].id = view_id;
                         bind.samplers[j].id = smp_id;
                         apply_bindings = true;
                     }
@@ -2297,11 +2319,37 @@ void sgp_set_image(int channel, sg_image image) {
     }
 
     _sgp.state.textures.images[channel] = image;
+    if (image.id == _sgp.white_img.id) {
+        _sgp.state.textures.views[channel] = _sgp.white_view;
+    } else {
+        _sgp.state.textures.views[channel] = (sg_view){SG_INVALID_ID};
+    }
 
     // recalculate textures count
     int textures_count = (int)_sgp.state.textures.count;
     for (int i=_sg_max(channel, textures_count-1);i>=0;--i) {
         if (_sgp.state.textures.images[i].id != SG_INVALID_ID) {
+            textures_count = i + 1;
+            break;
+        }
+    }
+    _sgp.state.textures.count = (uint32_t)textures_count;
+}
+
+void sgp_set_view(int channel, sg_view view) {
+    SOKOL_ASSERT(_sgp.init_cookie == _SGP_INIT_COOKIE);
+    SOKOL_ASSERT(_sgp.cur_state > 0);
+    SOKOL_ASSERT(channel >= 0 && channel < SGP_TEXTURE_SLOTS);
+    if (_sgp.state.textures.views[channel].id == view.id) {
+        return;
+    }
+
+    _sgp.state.textures.views[channel] = view;
+
+    // recalculate textures count
+    int textures_count = (int)_sgp.state.textures.count;
+    for (int i=_sg_max(channel, textures_count-1);i>=0;--i) {
+        if (_sgp.state.textures.views[i].id != SG_INVALID_ID) {
             textures_count = i + 1;
             break;
         }
@@ -2916,9 +2964,7 @@ void sgp_draw_filled_rect(float x, float y, float w, float h) {
 }
 
 static sgp_isize _sgp_query_image_size(sg_image img_id) {
-    const _sg_image_t* img = _sg_lookup_image(&_sg.pools, img_id.id);
-    SOKOL_ASSERT(img);
-    sgp_isize size = {img ? img->cmn.width : 0, img ? img->cmn.height : 0};
+    sgp_isize size = {sg_query_image_width(img_id), sg_query_image_height(img_id)};
     return size;
 }
 
