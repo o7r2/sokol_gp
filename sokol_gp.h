@@ -138,7 +138,7 @@ The following is a quick example on how to this library with Sokol GFX and Sokol
 ```c
 // This is an example on how to set up and use Sokol GP to draw a filled rectangle.
 
-// Includes Sokol GFX, Sokol GP and Sokol APP, doing all implementations.
+// Includes Sokol GFX, Sokol GP and Sokol APP with implementations enabled.
 #define SOKOL_IMPL
 #include "sokol_gfx.h"
 #include "sokol_gp.h"
@@ -1638,20 +1638,20 @@ static sg_shader _sgp_make_common_shader(void) {
     sg_backend backend = sg_query_backend();
     sg_shader_desc desc;
     memset(&desc, 0, sizeof(desc));
-    desc.images[0].stage = SG_SHADERSTAGE_FRAGMENT;
-    desc.images[0].multisampled = false;
-    desc.images[0].image_type = SG_IMAGETYPE_2D;
-    desc.images[0].sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+    desc.views[0].texture.stage = SG_SHADERSTAGE_FRAGMENT;
+    desc.views[0].texture.multisampled = false;
+    desc.views[0].texture.image_type = SG_IMAGETYPE_2D;
+    desc.views[0].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
     desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
     desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
-    desc.image_sampler_pairs[0].stage = SG_SHADERSTAGE_FRAGMENT;
-    desc.image_sampler_pairs[0].image_slot = 0;
-    desc.image_sampler_pairs[0].sampler_slot = 0;
+    desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_FRAGMENT;
+    desc.texture_sampler_pairs[0].view_slot = 0;
+    desc.texture_sampler_pairs[0].sampler_slot = 0;
 
     // GLCORE / GLES3 only
     desc.attrs[SGP_VS_ATTR_COORD].glsl_name = "coord";
     desc.attrs[SGP_VS_ATTR_COLOR].glsl_name = "color";
-    desc.image_sampler_pairs[0].glsl_name = "iTexChannel0_iSmpChannel0";
+    desc.texture_sampler_pairs[0].glsl_name = "iTexChannel0_iSmpChannel0";
 
     // D3D11 only
     desc.attrs[SGP_VS_ATTR_COORD].hlsl_sem_name = "TEXCOORD";
@@ -1757,8 +1757,9 @@ void sgp_setup(const sgp_desc* desc) {
     sg_buffer_desc vertex_buf_desc;
     memset(&vertex_buf_desc, 0, sizeof(sg_buffer_desc));
     vertex_buf_desc.size = (size_t)(_sgp.num_vertices * sizeof(sgp_vertex));
-    vertex_buf_desc.type = SG_BUFFERTYPE_VERTEXBUFFER;
-    vertex_buf_desc.usage = SG_USAGE_STREAM;
+    vertex_buf_desc.usage.vertex_buffer = true;
+    vertex_buf_desc.usage.immutable = false;
+    vertex_buf_desc.usage.stream_update = true;
 
     _sgp.vertex_buf = sg_make_buffer(&vertex_buf_desc);
     if (sg_query_buffer_state(_sgp.vertex_buf) != SG_RESOURCESTATE_VALID) {
@@ -1776,8 +1777,8 @@ void sgp_setup(const sgp_desc* desc) {
     white_img_desc.width = 2;
     white_img_desc.height = 2;
     white_img_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
-    white_img_desc.data.subimage[0][0].ptr = pixels;
-    white_img_desc.data.subimage[0][0].size = sizeof(pixels);
+    white_img_desc.data.mip_levels[0].ptr = pixels;
+    white_img_desc.data.mip_levels[0].size = sizeof(pixels);
     white_img_desc.label = "sgp-white-texture";
     _sgp.white_img = sg_make_image(&white_img_desc);
     if (sg_query_image_state(_sgp.white_img) != SG_RESOURCESTATE_VALID) {
@@ -2003,8 +2004,12 @@ void sgp_flush(void) {
     uint32_t cur_pip_id = _SGP_IMPOSSIBLE_ID;
     uint32_t cur_uniform_index = _SGP_IMPOSSIBLE_ID;
     uint32_t cur_imgs_id[SGP_TEXTURE_SLOTS];
+    uint32_t cur_smps_id[SGP_TEXTURE_SLOTS];
+    sg_view cur_views[SGP_TEXTURE_SLOTS];
     for (int i=0;i<SGP_TEXTURE_SLOTS;++i) {
         cur_imgs_id[i] = _SGP_IMPOSSIBLE_ID;
+        cur_smps_id[i] = _SGP_IMPOSSIBLE_ID;
+        cur_views[i].id = SG_INVALID_ID;
     }
 
     // define the resource bindings
@@ -2052,10 +2057,30 @@ void sgp_flush(void) {
                             smp_id = args->textures.samplers[j].id;
                         }
                     }
-                    if (cur_imgs_id[j] != img_id) {
-                        // when an image binding change we need to re-apply bindings
+                    if ((cur_imgs_id[j] != img_id) || (cur_smps_id[j] != smp_id)) {
+                        // Bindings now require texture views instead of raw images.
+                        if (cur_views[j].id != SG_INVALID_ID) {
+                            sg_destroy_view(cur_views[j]);
+                            cur_views[j].id = SG_INVALID_ID;
+                        }
                         cur_imgs_id[j] = img_id;
-                        bind.images[j].id = img_id;
+                        cur_smps_id[j] = smp_id;
+                        if (img_id != SG_INVALID_ID) {
+                            sg_view_desc view_desc;
+                            memset(&view_desc, 0, sizeof(view_desc));
+                            view_desc.texture.image.id = img_id;
+                            cur_views[j] = sg_make_view(&view_desc);
+                            if (sg_query_view_state(cur_views[j]) != SG_RESOURCESTATE_VALID) {
+                                _sgp_set_error(SGP_ERROR_SOKOL_INVALID);
+                                for (uint32_t k = 0; k < SGP_TEXTURE_SLOTS; ++k) {
+                                    if (cur_views[k].id != SG_INVALID_ID) {
+                                        sg_destroy_view(cur_views[k]);
+                                    }
+                                }
+                                return;
+                            }
+                        }
+                        bind.views[j] = cur_views[j];
                         bind.samplers[j].id = smp_id;
                         apply_bindings = true;
                     }
@@ -2088,6 +2113,12 @@ void sgp_flush(void) {
                 // this command was optimized away
                 break;
             }
+        }
+    }
+
+    for (uint32_t i = 0; i < SGP_TEXTURE_SLOTS; ++i) {
+        if (cur_views[i].id != SG_INVALID_ID) {
+            sg_destroy_view(cur_views[i]);
         }
     }
 }
@@ -2916,7 +2947,7 @@ void sgp_draw_filled_rect(float x, float y, float w, float h) {
 }
 
 static sgp_isize _sgp_query_image_size(sg_image img_id) {
-    const _sg_image_t* img = _sg_lookup_image(&_sg.pools, img_id.id);
+    const _sg_image_t* img = _sg_lookup_image(img_id.id);
     SOKOL_ASSERT(img);
     sgp_isize size = {img ? img->cmn.width : 0, img ? img->cmn.height : 0};
     return size;
