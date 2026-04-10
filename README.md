@@ -133,7 +133,7 @@ The following is a quick example on how to this library with Sokol GFX and Sokol
 ```c
 // This is an example on how to set up and use Sokol GP to draw a filled rectangle.
 
-// Includes Sokol GFX, Sokol GP and Sokol APP, doing all implementations.
+// Includes Sokol GFX, Sokol GP and Sokol APP with implementations enabled.
 #define SOKOL_IMPL
 #include "sokol_gfx.h"
 #include "sokol_gp.h"
