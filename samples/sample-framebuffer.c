@@ -19,7 +19,6 @@ static sg_view fb_color_view;
 static sg_view fb_resolve_view;
 static sg_view fb_resolve_texture_view;
 static sg_view fb_depth_view;
-static sg_attachments fb_attachments;
 static sg_sampler linear_sampler;
 
 static void draw_triangles(void) {
@@ -61,7 +60,11 @@ static void draw_fbo(void) {
     pass_action.depth.clear_value = 1.0f;
     sg_pass pass = {
         .action = pass_action,
-        .attachments = fb_attachments
+        .attachments = {
+            .colors = { fb_color_view },
+            .resolves = { fb_resolve_view },
+            .depth_stencil = fb_depth_view,
+        }
     };
     sg_begin_pass(&pass);
     sgp_flush();
@@ -114,6 +117,8 @@ static void frame(void) {
 }
 
 static void init(void) {
+    sg_swapchain swapchain = sglue_swapchain();
+
     // initialize Sokol GFX
     sg_desc sgdesc = {
         .environment = sglue_environment(),
@@ -126,11 +131,10 @@ static void init(void) {
     }
 
     // initialize Sokol GP
-    sg_swapchain swc = sglue_swapchain();
     sgp_desc sgpdesc = {
-        .color_format = swc.color_format,
-        .depth_format = swc.depth_format,
-        .sample_count = swc.sample_count,
+        .color_format = swapchain.color_format,
+        .depth_format = swapchain.depth_format,
+        .sample_count = swapchain.sample_count,
     };
     sgp_setup(&sgpdesc);
     if (!sgp_is_valid()) {
@@ -140,11 +144,11 @@ static void init(void) {
 
     // create frame buffer color image (multi-sampled)
     sg_image_desc fb_color_image_desc = {
+        .usage.color_attachment = true,
         .width = 128,
         .height = 128,
-        .pixel_format = swc.color_format,
-        .sample_count = swc.sample_count,
-        .usage.color_attachment = true,
+        .pixel_format = swapchain.color_format,
+        .sample_count = swapchain.sample_count,
     };
     fb_color_image = sg_make_image(&fb_color_image_desc);
     if (sg_query_image_state(fb_color_image) != SG_RESOURCESTATE_VALID) {
@@ -158,11 +162,11 @@ static void init(void) {
 
     // create frame buffer resolve image
     sg_image_desc fb_resolve_image_desc = {
+        .usage.resolve_attachment = true,
         .width = 128,
         .height = 128,
-        .pixel_format = swc.color_format,
+        .pixel_format = swapchain.color_format,
         .sample_count = 1,
-        .usage.resolve_attachment = true,
     };
     fb_resolve_image = sg_make_image(&fb_resolve_image_desc);
     fb_resolve_view = sg_make_view(&(sg_view_desc){
@@ -174,13 +178,13 @@ static void init(void) {
         .label = "fb-resolve-texture-view"
     });
 
-    // create frame buffer depth stencil
+    // create frame buffer depth image
     sg_image_desc fb_depth_image_desc = {
+        .usage.depth_stencil_attachment = true,
         .width = 128,
         .height = 128,
-        .pixel_format = swc.depth_format,
-        .sample_count = swc.sample_count,
-        .usage.depth_stencil_attachment = true,
+        .pixel_format = swapchain.depth_format,
+        .sample_count = swapchain.sample_count,
     };
     fb_depth_image = sg_make_image(&fb_depth_image_desc);
     if (sg_query_image_state(fb_depth_image) != SG_RESOURCESTATE_VALID) {
@@ -192,14 +196,11 @@ static void init(void) {
         .label = "fb-depth-view"
     });
 
-    // create frame buffer attachments
-    fb_attachments = (sg_attachments){
-        .colors[0] = fb_color_view,
-        .resolves[0] = fb_resolve_view,
-        .depth_stencil = fb_depth_view
-    };
-    if (sg_query_view_state(fb_color_view) != SG_RESOURCESTATE_VALID) {
-        fprintf(stderr, "Failed to create frame buffer attachments\n");
+    if ((sg_query_view_state(fb_color_view) != SG_RESOURCESTATE_VALID) ||
+        (sg_query_view_state(fb_resolve_view) != SG_RESOURCESTATE_VALID) ||
+        (sg_query_view_state(fb_resolve_texture_view) != SG_RESOURCESTATE_VALID) ||
+        (sg_query_view_state(fb_depth_view) != SG_RESOURCESTATE_VALID)) {
+        fprintf(stderr, "Failed to create frame buffer attachment views\n");
         exit(-1);
     }
 
