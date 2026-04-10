@@ -138,7 +138,7 @@ The following is a quick example on how to this library with Sokol GFX and Sokol
 ```c
 // This is an example on how to set up and use Sokol GP to draw a filled rectangle.
 
-// Includes Sokol GFX, Sokol GP and Sokol APP, doing all implementations.
+// Includes Sokol GFX, Sokol GP and Sokol APP with implementations enabled.
 #define SOKOL_IMPL
 #include "sokol_gfx.h"
 #include "sokol_gp.h"
@@ -1762,6 +1762,7 @@ void sgp_setup(const sgp_desc* desc) {
     memset(&vertex_buf_desc, 0, sizeof(sg_buffer_desc));
     vertex_buf_desc.size = (size_t)(_sgp.num_vertices * sizeof(sgp_vertex));
     vertex_buf_desc.usage.vertex_buffer = true;
+    vertex_buf_desc.usage.immutable = false;
     vertex_buf_desc.usage.stream_update = true;
 
     _sgp.vertex_buf = sg_make_buffer(&vertex_buf_desc);
@@ -2024,9 +2025,11 @@ void sgp_flush(void) {
 
     uint32_t cur_pip_id = _SGP_IMPOSSIBLE_ID;
     uint32_t cur_uniform_index = _SGP_IMPOSSIBLE_ID;
-    uint32_t cur_views_id[SGP_TEXTURE_SLOTS];
+    uint32_t cur_imgs_id[SGP_TEXTURE_SLOTS];
+    uint32_t cur_smps_id[SGP_TEXTURE_SLOTS];
     for (int i=0;i<SGP_TEXTURE_SLOTS;++i) {
-        cur_views_id[i] = _SGP_IMPOSSIBLE_ID;
+        cur_imgs_id[i] = _SGP_IMPOSSIBLE_ID;
+        cur_smps_id[i] = _SGP_IMPOSSIBLE_ID;
     }
 
     // define the resource bindings
@@ -2074,9 +2077,9 @@ void sgp_flush(void) {
                             smp_id = args->textures.samplers[j].id;
                         }
                     }
-                    if (cur_views_id[j] != view_id) {
-                        // when a view binding change we need to re-apply bindings
-                        cur_views_id[j] = view_id;
+                    if ((cur_imgs_id[j] != view_id) || (cur_smps_id[j] != smp_id)) {
+                        cur_imgs_id[j] = view_id;
+                        cur_smps_id[j] = smp_id;
                         bind.views[j].id = view_id;
                         bind.samplers[j].id = smp_id;
                         apply_bindings = true;
@@ -2112,6 +2115,7 @@ void sgp_flush(void) {
             }
         }
     }
+
 }
 
 void sgp_end(void) {
@@ -2964,7 +2968,9 @@ void sgp_draw_filled_rect(float x, float y, float w, float h) {
 }
 
 static sgp_isize _sgp_query_image_size(sg_image img_id) {
-    sgp_isize size = {sg_query_image_width(img_id), sg_query_image_height(img_id)};
+    const _sg_image_t* img = _sg_lookup_image(img_id.id);
+    SOKOL_ASSERT(img);
+    sgp_isize size = {img ? img->cmn.width : 0, img ? img->cmn.height : 0};
     return size;
 }
 
