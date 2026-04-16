@@ -22,10 +22,8 @@ This sample showcases how to create 2D shader effects using multiple textures.
 static sg_pipeline pip;
 static sg_shader shd;
 static sg_image image;
-static sg_view view;
 static sg_sampler linear_sampler;
 static sg_image perlin_image;
-static sg_view perlin_view;
 
 static void frame(void) {
     // begin draw commands queue
@@ -47,17 +45,17 @@ static void frame(void) {
     uniforms.iLevel = 1.0f;
     sgp_set_pipeline(pip);
     sgp_set_uniform(NULL, 0, &uniforms, sizeof(effect_fs_uniforms_t));
-    sgp_set_view(IMG_iTexChannel0, view);
-    sgp_set_view(IMG_iTexChannel1, perlin_view);
-    sgp_set_sampler(SMP_iSmpChannel0, linear_sampler);
-    sgp_set_sampler(SMP_iSmpChannel1, linear_sampler);
+    sgp_set_image(VIEW_effect_iTexChannel0, image);
+    sgp_set_image(VIEW_effect_iTexChannel1, perlin_image);
+    sgp_set_sampler(SMP_effect_iSmpChannel0, linear_sampler);
+    sgp_set_sampler(SMP_effect_iSmpChannel1, linear_sampler);
     float width = (window_ratio >= image_ratio) ? window_width : image_ratio*window_height;
     float height = (window_ratio >= image_ratio) ? window_width/image_ratio : window_height;
     sgp_draw_filled_rect(0, 0, width, height);
-    sgp_reset_image(IMG_iTexChannel0);
-    sgp_reset_image(IMG_iTexChannel1);
-    sgp_reset_sampler(SMP_iSmpChannel0);
-    sgp_reset_sampler(SMP_iSmpChannel1);
+    sgp_reset_image(VIEW_effect_iTexChannel0);
+    sgp_reset_image(VIEW_effect_iTexChannel1);
+    sgp_reset_sampler(SMP_effect_iSmpChannel0);
+    sgp_reset_sampler(SMP_effect_iSmpChannel1);
     sgp_reset_pipeline();
 
     // dispatch draw commands
@@ -72,12 +70,6 @@ static void frame(void) {
 static sg_image load_image(const char *filename) {
     int width, height, channels;
     uint8_t* data = stbi_load(filename, &width, &height, &channels, 4);
-    if (!data) {
-        // try to load from parent directory
-        char path[512];
-        snprintf(path, sizeof(path), "../%s", filename);
-        data = stbi_load(path, &width, &height, &channels, 4);
-    }
     sg_image img = {SG_INVALID_ID};
     if (!data) {
         return img;
@@ -88,7 +80,6 @@ static sg_image load_image(const char *filename) {
     image_desc.data.mip_levels[0].ptr = data;
     image_desc.data.mip_levels[0].size = (size_t)(width * height * 4);
     img = sg_make_image(&image_desc);
-
     stbi_image_free(data);
     return img;
 }
@@ -120,8 +111,6 @@ static void init(void) {
         fprintf(stderr, "failed to load images");
         exit(-1);
     }
-    view = sg_make_view(&(sg_view_desc){.texture.image = image});
-    perlin_view = sg_make_view(&(sg_view_desc){.texture.image = perlin_image});
 
     // create linear sampler
     sg_sampler_desc linear_sampler_desc = {
@@ -153,8 +142,6 @@ static void init(void) {
 }
 
 static void cleanup(void) {
-    sg_destroy_view(view);
-    sg_destroy_view(perlin_view);
     sg_destroy_image(image);
     sg_destroy_image(perlin_image);
     sg_destroy_pipeline(pip);
@@ -170,7 +157,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         .init_cb = init,
         .frame_cb = frame,
         .cleanup_cb = cleanup,
-        .window_title = "Effect (Sokol GP)",
+        .window_title = "SDF (Sokol GP)",
         .logger.func = slog_func,
     };
 }
