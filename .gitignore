@@ -9,3 +9,4 @@
 *.log
 *.dxvk-cache
 .luamonrc
+.codex
